@@ -664,6 +664,12 @@
         let brandIndex = {}; let addrIndex = {}; let imagePathMap = {};
         let currentTaskFile = null; let currentResultsZip = null;
         let defaultBgImg = null;
+        window.allFilesMap = {}; // 用於 WebKitDirectory 模式的檔案記憶節點
+
+        // --- 強化跨平台路徑處理 ---
+        function normalizePath(p) {
+            return p ? p.replace(/\\/g, '/') : "";
+        }
 
         // 完全複刻 Go 版本的 GetGroup 邏輯
         // 來源: database/xlsx.go GetGroup()
@@ -928,17 +934,19 @@
         };
 
         async function processFileList(files) {
-            const xlsxFiles = files.filter(f => f.name.endsWith('.xlsx'));
+            const xlsxFiles = files.filter(f => f.name.endsWith('.xlsx') && !f.name.startsWith('~$'));
             if (xlsxFiles.length === 0) { addLog("找不到 Excel 檔案", "warning"); return; }
             addLog(`開始掃描，共發現 ${xlsxFiles.length} 個檔案...`);
-            const allFilesMap = {};
-            files.forEach(f => { allFilesMap[f.webkitRelativePath] = f; });
+            window.allFilesMap = {};
+            files.forEach(f => { window.allFilesMap[f.webkitRelativePath] = f; });
             brandIndex = {}; addrIndex = {};
             for (const file of xlsxFiles) {
                 try {
                     const rows = await readExcel(file);
                     const fullPath = file.webkitRelativePath;
-                    const dirPath = fullPath.substring(0, fullPath.lastIndexOf('/'));
+                    // 使用正規表達式相容 WebKit 在不同 OS 下的分隔符號
+                    const pathParts = fullPath.split(/[\\\/]/);
+                    const dirPath = pathParts.slice(0, -1).join('/');
                     processHistoryData(rows, dirPath, allFilesMap);
                 } catch (err) { console.error(err); }
             }
@@ -960,7 +968,8 @@
         function processHistoryData(rows, dirPath) {
             let count = 0;
             rows.forEach((row) => {
-                if (row.length >= 6 && row[1]) {
+                // 放寬條件：只要有 品名(row[1]) 就視為有效資料。不限制長度>=6，因為若結尾(如地址)為空，length會小於6
+                if (row.length >= 2 && row[1]) {
                     const id = String(row[0] || "").trim();
                     const rawName = String(row[1]).trim();
                     const normalizedKey = getNormalizedName(rawName);
@@ -968,6 +977,14 @@
 
                     if (normalizedKey) {
                         const record = { id, location, sourceFile: dirPath, rawName: rawName };
+                        
+                        // 衝突偵測：如果已經存在相同的 Key，印出警告說明「最後勝出者」
+                        if (addrIndex[normalizedKey] && addrIndex[normalizedKey].id !== id) {
+                            console.log(`%c[索引衝突] Key: "${normalizedKey}"`, 'color: #f59e0b; font-weight: bold;');
+                            console.log(` - 舊資料: [${addrIndex[normalizedKey].sourceFile}] ID:${addrIndex[normalizedKey].id}`);
+                            console.log(` - 新資料覆蓋: [${dirPath}] ID:${id} (勝出)`);
+                        }
+                        
                         addrIndex[normalizedKey] = record;
                         count++;
                     }
@@ -1084,7 +1101,7 @@
                         
                         // 圖檔尋找邏輯
                         if (handle) {
-                            const pathParts = imagePathMap[rec.id] || (rec.sourceFile ? rec.sourceFile.split(/[\\/]/) : []);
+                            const pathParts = (rec.sourceFile ? rec.sourceFile.split(/[\\\/]/) : (imagePathMap[rec.id] || []));
                             let targetDir = handle;
                             try {
                                 for (const part of pathParts) {
@@ -1101,6 +1118,19 @@
                                     } catch (e) { }
                                 }
                             } catch (e) { }
+                        } else if (window.allFilesMap) {
+                            // 支援 WebKitDirectory 模式 (Safari/Mac)
+                            for (const ext of ['.png', '.jpg', '.jpeg', '.PNG', '.JPG']) {
+                                const fileName = `${rec.id}${ext}`;
+                                const tryPath = rec.sourceFile ? `${rec.sourceFile}/${fileName}` : fileName;
+                                const fileInMap = window.allFilesMap[tryPath] || window.allFilesMap[fileName];
+                                
+                                if (fileInMap) {
+                                    labelsFolder.file(`${data.serial}.png`, fileInMap);
+                                    imgFound = true;
+                                    break;
+                                }
+                            }
                         }
                     } else {
                         console.log(`%c[比對失敗] 序號:${data.serial} | 找不到符合的歷史資料 ("${normalizedTaskName}")`, 'color: #f59e0b;');
