@@ -899,6 +899,13 @@
 
                 if (excelFiles.length === 0) throw new Error("資料夾內找不到任何 Excel 資料表");
 
+                // 強制照字母與數字順序 (小到大) 排序，確保新的資料夾(大數字)最後掃描並覆蓋舊資料
+                excelFiles.sort((a, b) => {
+                    const pathA = [...a.pathParts, a.handle.name].join('/');
+                    const pathB = [...b.pathParts, b.handle.name].join('/');
+                    return pathA.localeCompare(pathB, undefined, { numeric: true });
+                });
+
                 for (const item of excelFiles) {
                     try {
                         const file = await item.handle.getFile();
@@ -936,6 +943,10 @@
         async function processFileList(files) {
             const xlsxFiles = files.filter(f => f.name.endsWith('.xlsx') && !f.name.startsWith('~$'));
             if (xlsxFiles.length === 0) { addLog("找不到 Excel 檔案", "warning"); return; }
+            
+            // 強制照字母與數字順序 (小到大) 排序，確保 Mac 也是按照路徑順序覆蓋
+            xlsxFiles.sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath, undefined, { numeric: true }));
+            
             addLog(`開始掃描，共發現 ${xlsxFiles.length} 個檔案...`);
             window.allFilesMap = {};
             files.forEach(f => { window.allFilesMap[f.webkitRelativePath] = f; });
@@ -977,14 +988,14 @@
 
                     if (normalizedKey) {
                         const record = { id, location, sourceFile: dirPath, rawName: rawName };
-                        
+
                         // 衝突偵測：如果已經存在相同的 Key，印出警告說明「最後勝出者」
                         if (addrIndex[normalizedKey] && addrIndex[normalizedKey].id !== id) {
                             console.log(`%c[索引衝突] Key: "${normalizedKey}"`, 'color: #f59e0b; font-weight: bold;');
                             console.log(` - 舊資料: [${addrIndex[normalizedKey].sourceFile}] ID:${addrIndex[normalizedKey].id}`);
                             console.log(` - 新資料覆蓋: [${dirPath}] ID:${id} (勝出)`);
                         }
-                        
+
                         addrIndex[normalizedKey] = record;
                         count++;
                     }
@@ -1098,7 +1109,7 @@
                         console.log(` - 歷史來源: [${rec.sourceFile}]`);
                         console.log(` - 圖檔編號: ${rec.id}`);
                         data.address = rec.location || data.address;
-                        
+
                         // 圖檔尋找邏輯
                         if (handle) {
                             const pathParts = (rec.sourceFile ? rec.sourceFile.split(/[\\\/]/) : (imagePathMap[rec.id] || []));
@@ -1124,7 +1135,7 @@
                                 const fileName = `${rec.id}${ext}`;
                                 const tryPath = rec.sourceFile ? `${rec.sourceFile}/${fileName}` : fileName;
                                 const fileInMap = window.allFilesMap[tryPath] || window.allFilesMap[fileName];
-                                
+
                                 if (fileInMap) {
                                     labelsFolder.file(`${data.serial}.png`, fileInMap);
                                     imgFound = true;
